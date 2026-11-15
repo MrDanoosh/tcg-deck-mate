@@ -1,4 +1,7 @@
-
+import 'features/cards/card_database_screen.dart';
+import 'features/decks/deck_builder_screen.dart';
+import 'features/judge/judge_desk_screen.dart';
+import 'features/tournaments/tournament_tools_screen.dart';
 import 'package:flutter/material.dart';
 
 void main() {
@@ -37,13 +40,13 @@ class MainNavigation extends StatefulWidget {
 class _MainNavigationState extends State<MainNavigation> {
   int selectedIndex = 0;
 
-  final List<Widget> pages = const [
-    HomeScreen(),
-    FeatureScreen(title: 'Card Database', icon: Icons.search),
-    FeatureScreen(title: 'Deck Builder', icon: Icons.layers),
-    FeatureScreen(title: 'Judge Desk', icon: Icons.menu_book),
-    FeatureScreen(title: 'Settings', icon: Icons.settings),
-  ];
+final List<Widget> pages = const [
+  HomeScreen(),
+  CardDatabaseScreen(),
+  DeckBuilderScreen(),
+  JudgeDeskScreen(),
+  TournamentToolsScreen(),
+];
 
   @override
   Widget build(BuildContext context) {
@@ -100,7 +103,7 @@ class HomeScreen extends StatelessWidget {
           children: [
             const SizedBox(height: 12),
             const Text(
-              'POKEMON TCG',
+              'TCG Mate',
               style: TextStyle(
                 color: Color(0xFFE53935),
                 fontSize: 13,
@@ -110,7 +113,7 @@ class HomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 5),
             const Text(
-              'COMPANION',
+              'TGC COMPANION',
               style: TextStyle(
                 fontSize: 30,
                 fontWeight: FontWeight.w900,
