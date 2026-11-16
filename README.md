@@ -27,7 +27,7 @@ The application brings together essential tools for competitive play, deck build
 - Designed to support judges during organised play.
 
 ### 🏆 Tournament Tools
-- 50-minute tournament round timer.
+- 30-minute tournament round timer.
 - Virtual coin flip.
 - Dice roller.
 - Judge call notes.
