@@ -48,4 +48,40 @@ Future<Map<String, dynamic>> getCard(String id) async {
   );
 }
 
+Future<Map<String, dynamic>> getSet(String setId) async {
+  final uri = Uri.parse('$baseUrl/sets/$setId');
+
+  final response = await http.get(uri);
+
+  if (response.statusCode == 200) {
+    return jsonDecode(response.body)
+        as Map<String, dynamic>;
+  }
+
+  throw Exception(
+    'Unable to retrieve set: ${response.statusCode}',
+  );
+}
+
+Future<Map<String, dynamic>> getCardBySetAndNumber(
+  String setId,
+  String cardNumber,
+) async {
+  final uri = Uri.parse(
+    '$baseUrl/sets/$setId/$cardNumber',
+  );
+
+  final response = await http.get(uri);
+
+  if (response.statusCode == 200) {
+    return jsonDecode(response.body)
+        as Map<String, dynamic>;
+  }
+
+  throw Exception(
+    'Unable to retrieve card: ${response.statusCode}',
+  );
+}
+
+
 }

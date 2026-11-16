@@ -1,5 +1,7 @@
 
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 import '../cards/tcgdex_card.dart';
 import '../cards/tcgdex_card_detail_screen.dart';
@@ -20,6 +22,35 @@ class DeckCardOption {
     this.unlimitedCopies = false,
   });
 }
+
+
+class DecklistEntry {
+  final int quantity;
+  final String cardName;
+  final String setCode;
+  final String cardNumber;
+
+  const DecklistEntry({
+    required this.quantity,
+    required this.cardName,
+    required this.setCode,
+    required this.cardNumber,
+  });
+}
+
+
+class ImportedCardResult {
+  final DecklistEntry entry;
+  final Map<String, dynamic>? cardDetails;
+
+  const ImportedCardResult({
+    required this.entry,
+    required this.cardDetails,
+  });
+
+  bool get isMatched => cardDetails != null;
+}
+
 
 class DeckBuilderScreen extends StatefulWidget {
   const DeckBuilderScreen({super.key});
@@ -42,12 +73,64 @@ class _DeckBuilderScreenState extends State<DeckBuilderScreen> {
 
   final Set<String> addingCardIds = {};
 
+final Map<String, Map<String, dynamic>> setCache = {};
+
+
   bool isLoading = false;
   bool hasSearched = false;
   String? errorMessage;
+  String selectedCategory = 'All';
+
+List<DecklistEntry> parseDecklist(String input) {
+  final entries = <DecklistEntry>[];
+
+  final lines = input.split('\n');
+
+  final cardPattern = RegExp(
+    r'^(\d+)\s+(.+?)\s+([A-Z0-9]{2,5})\s+(\d+[a-zA-Z]?)$',
+  );
+
+  for (final line in lines) {
+    final trimmedLine = line.trim();
+
+    if (trimmedLine.isEmpty) continue;
+
+    final match = cardPattern.firstMatch(trimmedLine);
+
+    if (match == null) continue;
+
+    entries.add(
+      DecklistEntry(
+        quantity: int.parse(match.group(1)!),
+        cardName: match.group(2)!,
+        setCode: match.group(3)!,
+        cardNumber: match.group(4)!,
+      ),
+    );
+  }
+
+  return entries;
+}
+
 
   int get totalCards =>
       deck.values.fold(0, (total, count) => total + count);
+
+int get pokemonCount => deck.entries
+    .where((entry) =>
+        deckCardDetails[entry.key]?.category == 'Pokémon')
+    .fold(0, (total, entry) => total + entry.value);
+
+int get trainerCount => deck.entries
+    .where((entry) =>
+        deckCardDetails[entry.key]?.category == 'Trainer')
+    .fold(0, (total, entry) => total + entry.value);
+
+int get energyCount => deck.entries
+    .where((entry) =>
+        deckCardDetails[entry.key]?.category == 'Energy')
+    .fold(0, (total, entry) => total + entry.value);
+
 
   int copiesOfName(String name) {
     final matchingIds = deckCardDetails.values
@@ -93,6 +176,98 @@ class _DeckBuilderScreenState extends State<DeckBuilderScreen> {
       });
     }
   }
+
+
+Future<List<ImportedCardResult>> matchDecklist(
+  List<DecklistEntry> entries,
+) async {
+  final results = <ImportedCardResult>[];
+
+  for (final entry in entries) {
+    final matchedCard = await matchImportedCard(entry);
+
+    results.add(
+      ImportedCardResult(
+        entry: entry,
+        cardDetails: matchedCard,
+      ),
+    );
+  }
+
+  return results;
+}
+
+Future<Map<String, dynamic>?> matchImportedCard(
+  DecklistEntry entry,
+) async {
+  try {
+    // Load the available set IDs once.
+    if (setCache.isEmpty) {
+      final uri = Uri.parse(
+        '${TcgDexService.baseUrl}/sets',
+      );
+
+      final response = await http.get(uri);
+
+      if (response.statusCode != 200) {
+        throw Exception('Unable to retrieve sets');
+      }
+
+      final List<dynamic> sets = jsonDecode(response.body);
+
+      for (final set in sets) {
+        final setId = set['id']?.toString();
+
+        if (setId != null) {
+          setCache[setId] = {};
+        }
+      }
+    }
+
+    // Find a set with the matching abbreviation.
+    for (final setId in setCache.keys.toList()) {
+      if (setCache[setId]!.isEmpty) {
+        final details = await tcgDexService.getSet(setId);
+
+        setCache[setId] = details;
+      }
+
+      final set = setCache[setId]!;
+
+      final abbreviation = set['abbreviation'];
+
+      final official = abbreviation is Map
+          ? abbreviation['official']?.toString()
+          : null;
+
+      final localized = abbreviation is Map
+          ? abbreviation['localized']?.toString()
+          : null;
+
+      final matchesSet =
+          official?.toUpperCase() == entry.setCode.toUpperCase() ||
+          localized?.toUpperCase() == entry.setCode.toUpperCase();
+
+      if (!matchesSet) continue;
+
+      final card = await tcgDexService.getCardBySetAndNumber(
+        setId,
+        entry.cardNumber,
+      );
+
+      if (card['name']?.toString().toLowerCase() ==
+          entry.cardName.toLowerCase()) {
+        return card;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    debugPrint('Card matching error: $error');
+    return null;
+  }
+}
+
 
   Future<void> addCard(TcgDexCard card) async {
     if (totalCards >= 60) return;
@@ -181,6 +356,112 @@ class _DeckBuilderScreenState extends State<DeckBuilderScreen> {
     });
   }
 
+
+
+
+Future<void> showImportDialog() async {
+  final result = await showDialog<String>(
+    context: context,
+    builder: (dialogContext) {
+      return const ImportDecklistDialog();
+    },
+  );
+
+  if (!mounted || result == null) return;
+
+  final entries = parseDecklist(result);
+
+// Show a loading dialog while cards are being checked.
+showDialog<void>(
+  context: context,
+  barrierDismissible: false,
+  builder: (context) {
+    return const AlertDialog(
+      content: Row(
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(width: 20),
+          Expanded(
+            child: Text(
+              'Checking cards against TCGdex...',
+            ),
+          ),
+        ],
+      ),
+    );
+  },
+);
+
+// Give Flutter time to display the loading dialog.
+await Future.delayed(const Duration(milliseconds: 100));
+
+// Check the cards.
+final matchedResults = await matchDecklist(entries);
+
+// Close the loading dialog.
+if (mounted) {
+  Navigator.of(context, rootNavigator: true).pop();
+}
+
+  if (entries.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('No valid card entries found.'),
+      ),
+    );
+    return;
+  }
+
+  showDialog(
+    context: context,
+    builder: (dialogContext) {
+      return AlertDialog(
+        title: Text(
+  'Import Preview '
+  '(${matchedResults.where((item) => item.isMatched).length}'
+  '/${matchedResults.length} matched)',
+),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: ListView.builder(
+            itemCount: entries.length,
+            itemBuilder: (context, index) {
+              final result = matchedResults[index];
+final entry = result.entry;
+
+              
+return ListTile(
+  dense: true,
+  leading: CircleAvatar(
+    backgroundColor:
+        result.isMatched ? Colors.green : Colors.red,
+    child: Text('${entry.quantity}'),
+  ),
+  title: Text(entry.cardName),
+  subtitle: Text(
+    '${entry.setCode} ${entry.cardNumber}\n'
+    '${result.isMatched ? "Matched: ${result.cardDetails!['name']}" : "Card not found"}',
+  ),
+  isThreeLine: true,
+);
+
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+
+
   void clearDeck() {
     setState(() {
       deck.clear();
@@ -226,22 +507,37 @@ class _DeckBuilderScreenState extends State<DeckBuilderScreen> {
   @override
   Widget build(BuildContext context) {
     final selectedCards = deck.entries
+    
         .where((entry) => entry.value > 0)
         .map((entry) => deckCardDetails[entry.key])
         .whereType<DeckCardOption>()
         .toList();
 
+final filteredSelectedCards = selectedCards
+    .where((card) =>
+        selectedCategory == 'All' ||
+        card.category == selectedCategory)
+    .toList();
+
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Deck Builder'),
-        actions: [
-          IconButton(
-            tooltip: 'Clear deck',
-            icon: const Icon(Icons.delete_outline),
-            onPressed: deck.isEmpty ? null : clearDeck,
-          ),
-        ],
-      ),
+      
+appBar: AppBar(
+  title: const Text('Deck Builder'),
+  actions: [
+    IconButton(
+      tooltip: 'Import decklist',
+      icon: const Icon(Icons.file_download_outlined),
+      onPressed: showImportDialog,
+    ),
+    IconButton(
+      tooltip: 'Clear deck',
+      icon: const Icon(Icons.delete_outline),
+      onPressed: deck.isEmpty ? null : clearDeck,
+    ),
+  ],
+),
+
       body: SafeArea(
         child: Column(
           children: [
@@ -287,6 +583,18 @@ class _DeckBuilderScreenState extends State<DeckBuilderScreen> {
                             ? 'Deck complete!'
                             : '${60 - totalCards} more cards needed',
                       ),
+
+const SizedBox(height: 12),
+
+Row(
+  mainAxisAlignment: MainAxisAlignment.spaceAround,
+  children: [
+    Text('Pokémon: $pokemonCount'),
+    Text('Trainers: $trainerCount'),
+    Text('Energy: $energyCount'),
+  ],
+),
+
                     ],
                   ),
                 ),
@@ -460,19 +768,44 @@ class _DeckBuilderScreenState extends State<DeckBuilderScreen> {
               ),
             ),
 
+Padding(
+  padding: const EdgeInsets.symmetric(horizontal: 12),
+  child: SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    child: Row(
+      children: ['All', 'Pokémon', 'Trainer', 'Energy']
+          .map((category) => Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  label: Text(category),
+                  selected: selectedCategory == category,
+                  onSelected: (selected) {
+                    setState(() {
+                      selectedCategory = category;
+                    });
+                  },
+                ),
+              ))
+          .toList(),
+    ),
+  ),
+),
+
             SizedBox(
               height: 150,
-              child: selectedCards.isEmpty
-                  ? const Center(
+              child: filteredSelectedCards.isEmpty
+                  ?  Center(
                       child: Text(
-                        'Your deck is empty. Search above to add cards.',
+                        selectedCards.isEmpty
+    ? 'Your deck is empty. Search above to add cards.'
+    : 'No cards in this category.',
                         textAlign: TextAlign.center,
                       ),
                     )
                   : ListView.builder(
-                      itemCount: selectedCards.length,
+                      itemCount: filteredSelectedCards.length,
                       itemBuilder: (context, index) {
-                        final card = selectedCards[index];
+                        final card = filteredSelectedCards[index];
                         final count = deck[card.id] ?? 0;
 
                         return ListTile(
@@ -508,6 +841,57 @@ class _DeckBuilderScreenState extends State<DeckBuilderScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class ImportDecklistDialog extends StatefulWidget {
+  const ImportDecklistDialog({super.key});
+
+  @override
+  State<ImportDecklistDialog> createState() =>
+      _ImportDecklistDialogState();
+}
+
+class _ImportDecklistDialogState
+    extends State<ImportDecklistDialog> {
+  final TextEditingController controller =
+      TextEditingController();
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Import Limitless Decklist'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: TextField(
+          controller: controller,
+          maxLines: 12,
+          minLines: 8,
+          decoration: const InputDecoration(
+            hintText: 'Paste your Pokémon TCG decklist here...',
+            border: OutlineInputBorder(),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(context, controller.text);
+          },
+          child: const Text('Read Decklist'),
+        ),
+      ],
     );
   }
 }
