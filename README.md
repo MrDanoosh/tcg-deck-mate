@@ -1,4 +1,4 @@
 # tcg-deck-mate
 TCG Deck Mate
 
-A new Flutter project.
+A functional TCG application for players!
