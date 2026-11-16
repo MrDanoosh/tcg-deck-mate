@@ -110,7 +110,7 @@ class _TcgDexCardDetailScreenState
                     '$image/high.webp',
                     height: 300,
                     fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) {
+                    errorBuilder: (_, _, _) {
                       return const Icon(
                         Icons.image_not_supported,
                         size: 80,
